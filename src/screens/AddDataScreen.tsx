@@ -25,7 +25,7 @@ const AddDataScreen = () => {
     const handleSubmit = () => {
         if (!user) return;
 
-        // Basic validation
+
         if (!form.bp || !form.pulseRate) {
             Alert.alert('Error', 'Please fill in at least BP and Pulse Rate');
             return;
@@ -37,8 +37,8 @@ const AddDataScreen = () => {
             pulseRate: parseInt(form.pulseRate) || 0,
             stepsCount: parseInt(form.stepsCount) || 0,
             sleepHours: parseFloat(form.sleepHours) || 0,
-            calorieIntake: 2000, // Default
-            waterIntake: 2.0, // Default
+            calorieIntake: 2000,
+            waterIntake: 2.0,
             weight: parseFloat(form.weight) || 70,
             sugarLevel: parseInt(form.sugarLevel) || 100,
             userId: user.id,

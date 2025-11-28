@@ -2,7 +2,7 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { HealthLog } from '../types';
 
 interface HealthState {
-    healthData: Record<string, HealthLog[]>; // userId -> logs
+    healthData: Record<string, HealthLog[]>;
 }
 
 const initialState: HealthState = {

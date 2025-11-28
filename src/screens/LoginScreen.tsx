@@ -8,7 +8,7 @@ import { useAppTheme } from '../hooks/useAppTheme';
 import { ThreeDCard } from '../components/ThreeDCard';
 import { User } from '../types';
 
-// Map avatar strings to require statements
+
 const avatarMap: Record<string, any> = {
     avatar1: require('../assets/avatars/avatar1.png'),
     avatar2: require('../assets/avatars/avatar2.png'),
@@ -45,12 +45,12 @@ const LoginScreen = () => {
                 dispatch(login(user));
             } else {
                 Alert.alert('Authentication Failed', 'Please try again or use password (dummy bypass).');
-                // For dummy app, allow bypass on failure if desired, or just enforce.
-                // Let's allow bypass for testing if biometric fails/cancelled
+
+
                 dispatch(login(user));
             }
         } else {
-            // No biometrics, just login
+
             dispatch(login(user));
         }
     };

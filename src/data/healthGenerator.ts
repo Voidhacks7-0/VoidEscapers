@@ -6,7 +6,7 @@ export const generateHealthData = (userId: string) => {
         const date = new Date(today);
         date.setDate(today.getDate() - i);
 
-        // Randomize data slightly
+
         const systolic = 110 + Math.floor(Math.random() * 30);
         const diastolic = 70 + Math.floor(Math.random() * 20);
         const pulse = 60 + Math.floor(Math.random() * 40);
@@ -21,10 +21,10 @@ export const generateHealthData = (userId: string) => {
             stepsCount: steps,
             calorieIntake: 2000 + Math.floor(Math.random() * 500),
             waterIntake: parseFloat((1.5 + Math.random() * 2).toFixed(1)),
-            weight: 70 + Math.random() * 2 - 1, // Fluctuate around 70
+            weight: 70 + Math.random() * 2 - 1,
             sugarLevel: 90 + Math.floor(Math.random() * 40),
             userId: userId
         });
     }
-    return data.reverse(); // Oldest first
+    return data.reverse();
 };

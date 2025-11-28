@@ -49,7 +49,7 @@ export const ThreeDCard: React.FC<ThreeDCardProps> = ({ children, style, gradien
     return (
         <GestureDetector gesture={gesture}>
             <Animated.View style={[styles.wrapper, animatedStyle, style]}>
-                {/* @ts-ignore */}
+
                 <Container
                     {...containerProps}
                     style={[
@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
     card: {
         borderRadius: 20,
         padding: 20,
-        overflow: 'hidden', // Ensure gradient respects border radius
+        overflow: 'hidden',
         width: '100%',
     },
 });

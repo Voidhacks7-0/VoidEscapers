@@ -7,7 +7,7 @@ import { RootState } from '../store';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { Ionicons } from '@expo/vector-icons';
 
-// Screens
+
 import LoginScreen from '../screens/LoginScreen';
 import HomeScreen from '../screens/HomeScreen';
 import AddDataScreen from '../screens/AddDataScreen';

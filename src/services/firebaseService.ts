@@ -1,5 +1,4 @@
-// Placeholder for Firebase integration
-// Future implementation will replace these mock functions with actual Firestore/Auth calls
+
 
 export const firebaseService = {
     auth: {

@@ -23,7 +23,7 @@ const ReportScreen = () => {
         }
 
         setIsLoading(true);
-        const summary = await generateReportSummary(healthData.slice(-30)); // Last 30 days
+        const summary = await generateReportSummary(healthData.slice(-30));
         setReportText(summary);
         setIsLoading(false);
     };
