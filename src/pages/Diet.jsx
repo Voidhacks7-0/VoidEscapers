@@ -84,38 +84,38 @@ export default function Diet() {
     });
 
     useEffect(() => {
-        setMounted(true);
-        if (!currentUser) return;
+        if (currentUser) {
+            setMounted(true);
+            const unsubscribe = subscribeToDietLogs(currentUser.uid, (newLogs) => {
+                setLogs(newLogs);
 
-        console.log("Diet component mounted, subscribing...");
-        const unsubscribe = subscribeToDietLogs((newLogs) => {
-            console.log("Diet logs updated in component:", newLogs);
-            setLogs(newLogs);
+                // Calculate totals from new logs
+                const newTotals = newLogs.reduce((acc, log) => {
+                    const isToday = new Date(log.timestamp).toDateString() === new Date().toDateString();
+                    if (isToday) {
+                        if (log.type === 'water') {
+                            acc.water += Number(log.value) || 0;
+                        } else {
+                            acc.calories += Number(log.calories) || 0;
+                            acc.protein += Number(log.protein) || 0;
+                            acc.carbs += Number(log.carbs) || 0;
+                            acc.fats += Number(log.fats) || 0;
+                        }
+                    }
+                    return acc;
+                }, { calories: 0, protein: 0, carbs: 0, fats: 0, water: 0 });
 
-            // Calculate totals
-            const newTotals = newLogs.reduce((acc, log) => {
-                if (log.type === 'water') {
-                    return { ...acc, water: acc.water + (Number(log.value) || 0) };
-                }
-                return {
-                    ...acc,
-                    calories: acc.calories + (Number(log.calories) || 0),
-                    protein: acc.protein + (Number(log.protein) || 0),
-                    carbs: acc.carbs + (Number(log.carbs) || 0),
-                    fats: acc.fats + (Number(log.fats) || 0)
-                };
-            }, { calories: 0, protein: 0, carbs: 0, fats: 0, water: 0 });
-
-            setTotals(newTotals);
-        });
-        return () => unsubscribe();
+                setTotals(newTotals);
+            });
+            return () => unsubscribe();
+        }
     }, [currentUser]);
 
     const handleLogMeal = async (e) => {
         e.preventDefault();
         setLoading(true);
         try {
-            await saveDietLog({
+            await saveDietLog(currentUser.uid, {
                 name: newMeal.name,
                 calories: Number(newMeal.calories),
                 protein: Number(newMeal.protein),
@@ -126,7 +126,7 @@ export default function Diet() {
             setShowLogModal(false);
             setNewMeal({ name: '', calories: '', protein: '', carbs: '', fats: '' });
         } catch (error) {
-            alert("Failed to log meal");
+            console.error("Failed to log meal", error);
         } finally {
             setLoading(false);
         }
@@ -134,7 +134,7 @@ export default function Diet() {
 
     const handleLogWater = async () => {
         try {
-            await saveDietLog({
+            await saveDietLog(currentUser.uid, {
                 name: 'Water',
                 value: 0.25, // 250ml
                 type: 'water'
@@ -144,12 +144,42 @@ export default function Diet() {
         }
     };
 
-    // Mock History Generator for Charts
-    const generateHistory = (currentVal, volatility = 20) => {
-        return Array.from({ length: 7 }, (_, i) => ({
-            date: new Date(Date.now() - (6 - i) * 86400000).toLocaleDateString('en-US', { weekday: 'short' }),
-            value: Math.max(0, Math.round(currentVal + (Math.random() * volatility - volatility / 2)))
-        }));
+    // Real History Aggregation
+    const calculateHistory = (metricKey, logs) => {
+        const historyMap = new Map();
+        const today = new Date();
+
+        // Initialize last 7 days with 0
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date(today);
+            d.setDate(d.getDate() - i);
+            const dateStr = d.toLocaleDateString('en-US', { weekday: 'short' });
+            historyMap.set(dateStr, 0);
+        }
+
+        // Aggregate logs
+        logs.forEach(log => {
+            const logDate = new Date(log.timestamp);
+            // Only consider logs from the last 7 days
+            const diffTime = Math.abs(today - logDate);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+            if (diffDays <= 7) {
+                const dateStr = logDate.toLocaleDateString('en-US', { weekday: 'short' });
+                if (historyMap.has(dateStr)) {
+                    let val = 0;
+                    if (metricKey === 'water' && log.type === 'water') val = Number(log.value) || 0;
+                    if (metricKey === 'calories' && log.type !== 'water') val = Number(log.calories) || 0;
+                    if (metricKey === 'protein' && log.type !== 'water') val = Number(log.protein) || 0;
+                    if (metricKey === 'carbs' && log.type !== 'water') val = Number(log.carbs) || 0;
+                    if (metricKey === 'fats' && log.type !== 'water') val = Number(log.fats) || 0;
+
+                    historyMap.set(dateStr, historyMap.get(dateStr) + val);
+                }
+            }
+        });
+
+        return Array.from(historyMap.entries()).map(([date, value]) => ({ date, value }));
     };
 
     const DIET_DATA = {
@@ -165,7 +195,7 @@ export default function Diet() {
             borderColor: 'border-orange-500/20',
             shadowColor: 'shadow-orange-500/20',
             icon: Utensils,
-            history: generateHistory(totals.calories, 200),
+            history: calculateHistory('calories', logs),
             description: `${Math.max(0, 2400 - totals.calories)} kcal remaining. You are on track.`
         },
         metrics: [
@@ -181,7 +211,7 @@ export default function Diet() {
                 borderColor: 'border-blue-500/20',
                 shadowColor: 'shadow-blue-500/20',
                 icon: Dumbbell,
-                history: generateHistory(totals.protein, 20)
+                history: calculateHistory('protein', logs)
             },
             {
                 id: 'carbs',
@@ -195,7 +225,7 @@ export default function Diet() {
                 borderColor: 'border-yellow-500/20',
                 shadowColor: 'shadow-yellow-500/20',
                 icon: Zap,
-                history: generateHistory(totals.carbs, 30)
+                history: calculateHistory('carbs', logs)
             },
             {
                 id: 'fats',
@@ -209,7 +239,7 @@ export default function Diet() {
                 borderColor: 'border-pink-500/20',
                 shadowColor: 'shadow-pink-500/20',
                 icon: Layers,
-                history: generateHistory(totals.fats, 10)
+                history: calculateHistory('fats', logs)
             },
             {
                 id: 'water',
@@ -223,7 +253,7 @@ export default function Diet() {
                 borderColor: 'border-cyan-500/20',
                 shadowColor: 'shadow-cyan-500/20',
                 icon: Droplets,
-                history: generateHistory(2.5, 0.5)
+                history: calculateHistory('water', logs)
             }
         ]
     };
@@ -454,103 +484,105 @@ export default function Diet() {
     );
 
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-indigo-500/30 relative overflow-x-hidden pb-24">
+        <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-indigo-500/30 relative overflow-x-hidden pb-24" >
 
             {/* --- Ambient Background Effects --- */}
-            <div className="fixed inset-0 pointer-events-none">
+            < div className="fixed inset-0 pointer-events-none" >
                 <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-orange-500/20 rounded-full blur-[120px] animate-pulse-slow"></div>
                 <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-yellow-500/10 rounded-full blur-[120px]"></div>
                 <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }}></div>
-            </div>
+            </div >
 
             <div className="max-w-5xl mx-auto px-4 py-8 relative z-10">
                 {selectedMetric ? renderDetailView() : renderDashboard()}
             </div>
 
             {/* Log Meal Modal */}
-            {showLogModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 w-full max-w-md shadow-2xl relative">
-                        <button
-                            onClick={() => setShowLogModal(false)}
-                            className="absolute top-4 right-4 text-slate-400 hover:text-white"
-                        >
-                            <X size={24} />
-                        </button>
-
-                        <h2 className="text-2xl font-bold text-white mb-6">Log Meal</h2>
-
-                        <form onSubmit={handleLogMeal} className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-400 mb-1">Meal Name</label>
-                                <input
-                                    type="text"
-                                    required
-                                    value={newMeal.name}
-                                    onChange={(e) => setNewMeal({ ...newMeal, name: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-orange-500/50"
-                                    placeholder="e.g., Grilled Chicken Salad"
-                                />
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-400 mb-1">Calories</label>
-                                    <input
-                                        type="number"
-                                        required
-                                        value={newMeal.calories}
-                                        onChange={(e) => setNewMeal({ ...newMeal, calories: e.target.value })}
-                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-orange-500/50"
-                                        placeholder="kcal"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-400 mb-1">Protein (g)</label>
-                                    <input
-                                        type="number"
-                                        required
-                                        value={newMeal.protein}
-                                        onChange={(e) => setNewMeal({ ...newMeal, protein: e.target.value })}
-                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                                        placeholder="g"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-400 mb-1">Carbs (g)</label>
-                                    <input
-                                        type="number"
-                                        required
-                                        value={newMeal.carbs}
-                                        onChange={(e) => setNewMeal({ ...newMeal, carbs: e.target.value })}
-                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500/50"
-                                        placeholder="g"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-400 mb-1">Fats (g)</label>
-                                    <input
-                                        type="number"
-                                        required
-                                        value={newMeal.fats}
-                                        onChange={(e) => setNewMeal({ ...newMeal, fats: e.target.value })}
-                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-pink-500/50"
-                                        placeholder="g"
-                                    />
-                                </div>
-                            </div>
-
+            {
+                showLogModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 w-full max-w-md shadow-2xl relative">
                             <button
-                                type="submit"
-                                disabled={loading}
-                                className="w-full py-4 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-white font-bold text-lg shadow-lg shadow-orange-500/20 hover:shadow-orange-500/40 hover:scale-[1.02] active:scale-[0.98] transition-all mt-4"
+                                onClick={() => setShowLogModal(false)}
+                                className="absolute top-4 right-4 text-slate-400 hover:text-white"
                             >
-                                {loading ? 'Logging...' : 'Add Meal'}
+                                <X size={24} />
                             </button>
-                        </form>
+
+                            <h2 className="text-2xl font-bold text-white mb-6">Log Meal</h2>
+
+                            <form onSubmit={handleLogMeal} className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-400 mb-1">Meal Name</label>
+                                    <input
+                                        type="text"
+                                        required
+                                        value={newMeal.name}
+                                        onChange={(e) => setNewMeal({ ...newMeal, name: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-orange-500/50"
+                                        placeholder="e.g., Grilled Chicken Salad"
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-400 mb-1">Calories</label>
+                                        <input
+                                            type="number"
+                                            required
+                                            value={newMeal.calories}
+                                            onChange={(e) => setNewMeal({ ...newMeal, calories: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-orange-500/50"
+                                            placeholder="kcal"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-400 mb-1">Protein (g)</label>
+                                        <input
+                                            type="number"
+                                            required
+                                            value={newMeal.protein}
+                                            onChange={(e) => setNewMeal({ ...newMeal, protein: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                                            placeholder="g"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-400 mb-1">Carbs (g)</label>
+                                        <input
+                                            type="number"
+                                            required
+                                            value={newMeal.carbs}
+                                            onChange={(e) => setNewMeal({ ...newMeal, carbs: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500/50"
+                                            placeholder="g"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-400 mb-1">Fats (g)</label>
+                                        <input
+                                            type="number"
+                                            required
+                                            value={newMeal.fats}
+                                            onChange={(e) => setNewMeal({ ...newMeal, fats: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-pink-500/50"
+                                            placeholder="g"
+                                        />
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    className="w-full py-4 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-white font-bold text-lg shadow-lg shadow-orange-500/20 hover:shadow-orange-500/40 hover:scale-[1.02] active:scale-[0.98] transition-all mt-4"
+                                >
+                                    {loading ? 'Logging...' : 'Add Meal'}
+                                </button>
+                            </form>
+                        </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Styles for custom animations */}
             <style>{`
@@ -584,6 +616,6 @@ export default function Diet() {
           animation: spin-slow 12s linear infinite;
         }
       `}</style>
-        </div>
+        </div >
     );
 }

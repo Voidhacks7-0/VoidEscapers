@@ -69,14 +69,14 @@ export default function Community() {
     if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">Loading...</div>;
 
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-200 font-sans relative pb-24">
+        <div className="text-slate-200 font-sans relative">
             {/* Background Effects */}
             <div className="fixed inset-0 pointer-events-none">
                 <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-[120px] animate-pulse-slow"></div>
                 <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[120px]"></div>
             </div>
 
-            <div className="max-w-3xl mx-auto px-4 py-6 relative z-10 h-[calc(100vh-100px)] flex flex-col">
+            <div className="max-w-3xl mx-auto px-4 relative z-10 h-[calc(100vh-240px)] flex flex-col">
                 {/* Header */}
                 <div className="flex items-center justify-between mb-6 bg-slate-900/50 p-4 rounded-2xl backdrop-blur-xl border border-slate-800/50">
                     <div className="flex items-center space-x-3">

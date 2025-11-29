@@ -13,7 +13,9 @@ import {
     Mic,
     MicOff,
     VideoOff,
-    Loader2
+    Loader2,
+    Image as ImageIcon,
+    Paperclip
 } from 'lucide-react';
 import { getGeminiResponse } from '../services/geminiService';
 
@@ -39,32 +41,56 @@ export default function Consult() {
     const [showDoctorList, setShowDoctorList] = useState(false);
     const [activeCall, setActiveCall] = useState(null); // null | doctor object
     const [isAiTyping, setIsAiTyping] = useState(false);
+    const [pendingImage, setPendingImage] = useState(null); // Base64 string of selected image
     const chatScrollRef = useRef(null);
+    const fileInputRef = useRef(null);
 
     // Initial Chat History (AI Only)
     const [history, setHistory] = useState([
-        { id: 1, sender: 'them', text: "Hello! I'm Vita, your personal health assistant. I can analyze your vitals and answer medical queries. How can I help you today?", time: '10:00 AM' }
+        { id: 1, sender: 'them', text: "Hello! I'm Vita, your health assistant. How can I help you today?", time: '10:00 AM' }
     ]);
 
     useEffect(() => {
         if (!showDoctorList && !activeCall && chatScrollRef.current) {
             chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
         }
-    }, [history, showDoctorList, activeCall, isAiTyping]);
+    }, [history, showDoctorList, activeCall, isAiTyping, pendingImage]);
+
+    const handleImageSelect = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setPendingImage(reader.result);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
-        if (!chatInput.trim()) return;
+        if (!chatInput.trim() && !pendingImage) return;
 
         const userText = chatInput;
-        const newMsg = { id: Date.now(), sender: 'me', text: userText, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+        const userImage = pendingImage;
+
+        const newMsg = {
+            id: Date.now(),
+            sender: 'me',
+            text: userText,
+            image: userImage,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
 
         setHistory(prev => [...prev, newMsg]);
         setChatInput("");
+        setPendingImage(null);
         setIsAiTyping(true);
 
         try {
-            const aiResponseText = await getGeminiResponse(userText);
+            // Pass history and image to Gemini Service
+            const aiResponseText = await getGeminiResponse(userText, history, userImage);
+
             const replyMsg = {
                 id: Date.now() + 1,
                 sender: 'them',
@@ -77,7 +103,7 @@ export default function Consult() {
             const errorMsg = {
                 id: Date.now() + 1,
                 sender: 'them',
-                text: "I'm having trouble connecting right now. Please try again.",
+                text: "Connection error. Please try again.",
                 time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             };
             setHistory(prev => [...prev, errorMsg]);
@@ -226,7 +252,10 @@ export default function Consult() {
                                 ? 'bg-gradient-to-br from-indigo-500 to-violet-600 text-white rounded-tr-sm shadow-lg shadow-indigo-500/10'
                                 : 'bg-slate-800 text-slate-200 rounded-tl-sm border border-slate-700/50'}
                      `}>
-                            <p className="text-sm leading-relaxed">{msg.text}</p>
+                            {msg.image && (
+                                <img src={msg.image} alt="User Upload" className="w-full h-auto rounded-lg mb-2 border border-white/10" />
+                            )}
+                            <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
                             <span className={`text-[10px] absolute -bottom-5 ${msg.sender === 'me' ? 'right-0 text-slate-500' : 'left-0 text-slate-500'} opacity-0 group-hover:opacity-100 transition-opacity`}>
                                 {msg.time}
                             </span>
@@ -251,8 +280,30 @@ export default function Consult() {
 
             {/* Chat Input */}
             <div className="p-4 bg-slate-800/30 border-t border-slate-700/50 backdrop-blur-md">
+                {/* Image Preview */}
+                {pendingImage && (
+                    <div className="mb-2 flex items-center bg-slate-800/80 p-2 rounded-xl w-fit border border-slate-700">
+                        <img src={pendingImage} alt="Preview" className="w-12 h-12 rounded-lg object-cover mr-2" />
+                        <button onClick={() => setPendingImage(null)} className="p-1 rounded-full bg-slate-700 hover:bg-slate-600 text-white">
+                            <X size={14} />
+                        </button>
+                    </div>
+                )}
+
                 <form onSubmit={handleSendMessage} className="flex items-center space-x-3">
-                    <button type="button" className="p-3 rounded-xl bg-slate-700/50 text-slate-400 hover:text-white transition-colors">
+                    <input
+                        type="file"
+                        accept="image/*"
+                        ref={fileInputRef}
+                        className="hidden"
+                        onChange={handleImageSelect}
+                    />
+                    <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="p-3 rounded-xl bg-slate-700/50 text-slate-400 hover:text-white transition-colors"
+                        title="Upload Image"
+                    >
                         <MoreVertical size={20} />
                     </button>
                     <input
@@ -264,8 +315,8 @@ export default function Consult() {
                     />
                     <button
                         type="submit"
-                        disabled={!chatInput.trim()}
-                        className={`p-3 rounded-xl transition-all duration-300 ${chatInput.trim() ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 transform hover:scale-105' : 'bg-slate-800 text-slate-600 cursor-not-allowed'}`}
+                        disabled={!chatInput.trim() && !pendingImage}
+                        className={`p-3 rounded-xl transition-all duration-300 ${chatInput.trim() || pendingImage ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 transform hover:scale-105' : 'bg-slate-800 text-slate-600 cursor-not-allowed'}`}
                     >
                         <Send size={20} />
                     </button>
@@ -275,7 +326,7 @@ export default function Consult() {
     );
 
     return (
-        <div className="h-[calc(100vh-140px)] flex flex-col relative overflow-hidden">
+        <div className="h-[calc(100vh-240px)] flex flex-col relative overflow-hidden">
 
             {/* --- Ambient Background Effects --- */}
             <div className="absolute inset-0 pointer-events-none">
@@ -295,16 +346,16 @@ export default function Consult() {
           width: 4px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
-          background: transparent; 
+          background: transparent;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #334155; 
+          background: #334155;
           border-radius: 10px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #475569; 
+          background: #475569;
         }
-        
+
         @keyframes spin-slow {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }

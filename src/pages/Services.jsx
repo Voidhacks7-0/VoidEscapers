@@ -42,13 +42,13 @@ const PREMIUM_MODELS = [
     },
     {
         id: 'm4',
-        name: "Report Generation",
+        name: "Report Analysis",
         desc: "Automated, detailed health report summaries.",
         icon: FileText,
         color: 'text-amber-400',
         gradient: 'from-amber-500 to-orange-600',
         shadow: 'shadow-amber-500/20',
-        link: '#'
+        link: 'https://reportanalyzer223344.netlify.app/'
     },
 ];
 

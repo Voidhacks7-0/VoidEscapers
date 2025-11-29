@@ -1,20 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Heart, Activity, Moon, Footprints, Flame, Droplets, Brain, ChevronLeft,
-    Zap, MoreHorizontal, Calendar, Plus, RefreshCw
+    Zap, MoreHorizontal, Calendar, Plus, RefreshCw, FileText, Sparkles, X, Loader
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import {
-    addManualEntry, getMetricHistory, seedDatabase, clearDatabase
+    addManualEntry, getMetricHistory, clearDatabase, getDietLogs, getUserProfile, subscribeToRecentMetrics
 } from '../services/dataService';
+import { getGeminiResponse } from '../services/geminiService';
+import { startSimulation, stopSimulation } from '../services/simulationService';
 import PremiumAreaChart from '../components/PremiumAreaChart';
 
 const INITIAL_DATA_TEMPLATE = {
     score: {
         id: 'score',
         label: 'Health Sync',
-        value: 87,
+        value: 0,
         unit: '/ 100',
         color: 'text-emerald-400',
         gradient: 'from-emerald-400 to-teal-300',
@@ -23,13 +25,13 @@ const INITIAL_DATA_TEMPLATE = {
         shadowColor: 'shadow-emerald-500/20',
         icon: Activity,
         history: [],
-        description: "Optimal zone. Recovery is 12% faster today."
+        description: "Start logging data to see your health score."
     },
     metrics: [
         {
             id: 'heart_rate',
             label: 'Heart Rate',
-            value: 72,
+            value: 0,
             unit: 'bpm',
             color: 'text-rose-400',
             gradient: 'from-rose-400 to-red-500',
@@ -43,7 +45,7 @@ const INITIAL_DATA_TEMPLATE = {
         {
             id: 'spo2',
             label: 'SpO2',
-            value: 98,
+            value: 0,
             unit: '%',
             color: 'text-cyan-400',
             gradient: 'from-cyan-400 to-blue-500',
@@ -56,7 +58,7 @@ const INITIAL_DATA_TEMPLATE = {
         {
             id: 'sleep',
             label: 'Sleep',
-            value: 7.5,
+            value: 0,
             unit: 'hrs',
             color: 'text-violet-400',
             gradient: 'from-violet-400 to-fuchsia-500',
@@ -69,7 +71,7 @@ const INITIAL_DATA_TEMPLATE = {
         {
             id: 'sugar',
             label: 'Glucose',
-            value: 95,
+            value: 0,
             unit: 'mg/dL',
             color: 'text-amber-400',
             gradient: 'from-amber-400 to-orange-500',
@@ -82,7 +84,7 @@ const INITIAL_DATA_TEMPLATE = {
         {
             id: 'steps',
             label: 'Steps',
-            value: 8432,
+            value: 0,
             unit: 'steps',
             color: 'text-teal-400',
             gradient: 'from-teal-400 to-emerald-500',
@@ -95,7 +97,7 @@ const INITIAL_DATA_TEMPLATE = {
         {
             id: 'calories',
             label: 'Burn',
-            value: 2150,
+            value: 0,
             unit: 'kcal',
             color: 'text-orange-400',
             gradient: 'from-orange-400 to-red-500',
@@ -108,7 +110,7 @@ const INITIAL_DATA_TEMPLATE = {
         {
             id: 'stress',
             label: 'Stress',
-            value: 32,
+            value: 0,
             unit: '/ 100',
             color: 'text-pink-400',
             gradient: 'from-pink-400 to-rose-500',
@@ -121,7 +123,7 @@ const INITIAL_DATA_TEMPLATE = {
         {
             id: 'bp',
             label: 'BP',
-            value: 118,
+            value: 0,
             unit: 'sys',
             color: 'text-indigo-400',
             gradient: 'from-indigo-400 to-blue-500',
@@ -137,15 +139,29 @@ const INITIAL_DATA_TEMPLATE = {
 export default function Dashboard() {
     const { currentUser } = useAuth();
     const navigate = useNavigate();
-    const [selectedMetric, setSelectedMetric] = useState(null);
-    const [mounted, setMounted] = useState(false);
+
+    // State
     const [dashboardData, setDashboardData] = useState(INITIAL_DATA_TEMPLATE);
+    const dashboardDataRef = useRef(dashboardData); // Ref to hold latest data for AI
+    const [selectedMetric, setSelectedMetric] = useState(null);
     const [loading, setLoading] = useState(true);
     const [resetting, setResetting] = useState(false);
+    const [mounted, setMounted] = useState(false);
 
     // Manual Entry State
     const [newValue, setNewValue] = useState('');
     const [addingData, setAddingData] = useState(false);
+
+    // AI Report State
+    const [showReportModal, setShowReportModal] = useState(false);
+    const [reportLoading, setReportLoading] = useState(false);
+    const [reportContent, setReportContent] = useState('');
+    const [showMenu, setShowMenu] = useState(false);
+
+    // Keep ref synced with state
+    useEffect(() => {
+        dashboardDataRef.current = dashboardData;
+    }, [dashboardData]);
 
     useEffect(() => {
         setMounted(true);
@@ -156,13 +172,40 @@ export default function Dashboard() {
         }
     }, [currentUser, navigate]);
 
+    // Real-time Data Listener
+    useEffect(() => {
+        if (!currentUser) return;
+
+        const unsubscribe = subscribeToRecentMetrics(currentUser.uid, (newMetrics) => {
+            setDashboardData(prev => {
+                const newData = { ...prev };
+                let updated = false;
+
+                newMetrics.forEach(metric => {
+                    const index = newData.metrics.findIndex(m => m.id === metric.type);
+                    if (index !== -1) {
+                        // Update value
+                        newData.metrics[index] = {
+                            ...newData.metrics[index],
+                            value: metric.value,
+                            // Add to history if not exists
+                            history: [...newData.metrics[index].history, { date: 'Now', value: metric.value }].slice(-20)
+                        };
+                        updated = true;
+                    }
+                });
+
+                return updated ? newData : prev;
+            });
+        });
+
+        return () => unsubscribe();
+    }, [currentUser]);
+
     const initializeData = async () => {
         try {
             setLoading(true);
-            // 1. Seed Database if empty
-            await seedDatabase();
-
-            // 2. Load Real Data from Firestore
+            // Load Real Data from Firestore
             await loadRealData();
         } catch (error) {
             console.error("Initialization failed:", error);
@@ -172,13 +215,14 @@ export default function Dashboard() {
     };
 
     const loadRealData = async () => {
+        if (!currentUser) return;
         try {
             // Update metrics with Firestore History
             const updatedMetrics = await Promise.all(INITIAL_DATA_TEMPLATE.metrics.map(async (metric) => {
-                const history = await getMetricHistory(metric.id);
+                const history = await getMetricHistory(currentUser.uid, metric.id);
 
-                // Use latest history value as current value, or default to template value if empty
-                let currentValue = metric.value;
+                // Use latest history value as current value, or 0 if empty
+                let currentValue = 0;
                 if (history.length > 0) {
                     currentValue = history[history.length - 1].value;
                 }
@@ -195,19 +239,92 @@ export default function Dashboard() {
                 metrics: updatedMetrics
             });
 
+            // Update selectedMetric if it's active so the detail view refreshes
+            if (selectedMetric) {
+                const updatedSelected = updatedMetrics.find(m => m.id === selectedMetric.id);
+                if (updatedSelected) {
+                    setSelectedMetric(updatedSelected);
+                }
+            }
+
+            // Trigger AI Score Update immediately after loading data
+            updateHealthScore(updatedMetrics);
+
         } catch (error) {
             console.error("Failed to load real data", error);
         }
     };
 
+    // AI Health Score Updater
+    const updateHealthScore = async (manualMetrics = null) => {
+        if (!currentUser) return;
+
+        try {
+            // Use passed metrics if available (to avoid state delay), otherwise use Ref
+            const metricsToUse = manualMetrics || dashboardDataRef.current.metrics;
+
+            console.log("Updating Health Score...", metricsToUse); // Debug Log
+
+            const profile = await getUserProfile(currentUser.uid);
+            const metricsSummary = metricsToUse.map(m => `${m.label}: ${m.value} ${m.unit}`).join(', ');
+
+            // Skip if data is all zero (initial state)
+            const hasData = metricsToUse.some(m => m.value > 0);
+            if (!hasData) {
+                console.log("Skipping AI score update: No data yet.");
+                return;
+            }
+
+            const prompt = `
+                Based on the following user health data, calculate a "Body Sync Score" from 0 to 100.
+                
+                Profile: Age ${profile?.age || 'N/A'}, Weight ${profile?.weight || 'N/A'}kg.
+                Metrics: ${metricsSummary}
+                
+                Return ONLY a JSON object with this format (no markdown, no extra text):
+                {
+                    "score": number,
+                    "reason": "Very short 10-word summary of why"
+                }
+            `;
+
+            const responseText = await getGeminiResponse(prompt);
+            console.log("AI Score Response:", responseText); // Debug Log
+
+            // Parse JSON from AI response (handle potential markdown wrapping)
+            const cleanJson = responseText.replace(/```json|```/g, '').trim();
+            const result = JSON.parse(cleanJson);
+
+            setDashboardData(prev => ({
+                ...prev,
+                score: {
+                    ...prev.score,
+                    value: result.score,
+                    description: result.reason
+                }
+            }));
+
+        } catch (error) {
+            console.error("Failed to update AI score:", error);
+        }
+    };
+
+    // Polling for AI Score (Every 60s)
+    useEffect(() => {
+        if (currentUser && mounted) {
+            // updateHealthScore(); // Removed initial call here as it's now handled in loadRealData
+            const interval = setInterval(updateHealthScore, 60000);
+            return () => clearInterval(interval);
+        }
+    }, [currentUser, mounted]);
+
     const handleResetData = async () => {
-        if (!window.confirm("This will delete all current data and regenerate fresh dummy data. Are you sure?")) return;
+        if (!window.confirm("This will delete ALL your health data. This action cannot be undone. Are you sure?")) return;
 
         setResetting(true);
         try {
-            await clearDatabase();
-            await seedDatabase();
-            await loadRealData();
+            await clearDatabase(currentUser.uid);
+            await loadRealData(); // Reloads to show 0s
         } catch (error) {
             console.error("Reset failed", error);
             alert(`Reset failed: ${error.message}`);
@@ -216,43 +333,76 @@ export default function Dashboard() {
         }
     };
 
+    const handleMetricClick = (metric) => {
+        setSelectedMetric(metric);
+    };
+
     const handleAddData = async (e) => {
-        e.preventDefault();
-        if (!newValue || !selectedMetric) return;
+        if (e) e.preventDefault();
+        if (!newValue || isNaN(newValue)) return;
 
         setAddingData(true);
         try {
-            await addManualEntry(selectedMetric.id, parseFloat(newValue));
-
-            // Optimistic Update
-            const updatedHistory = [
-                ...selectedMetric.history,
-                {
-                    date: 'Today',
-                    value: parseFloat(newValue),
-                    timestamp: new Date().toISOString()
-                }
-            ];
-
-            const updatedMetric = {
-                ...selectedMetric,
-                value: parseFloat(newValue),
-                history: updatedHistory
-            };
-
-            // Update local state
-            setSelectedMetric(updatedMetric);
-            setDashboardData(prev => ({
-                ...prev,
-                metrics: prev.metrics.map(m => m.id === selectedMetric.id ? updatedMetric : m)
-            }));
-
+            await addManualEntry(currentUser.uid, selectedMetric.id, Number(newValue));
+            await loadRealData(); // Refresh data
             setNewValue('');
         } catch (error) {
             console.error("Failed to add data", error);
-            alert(`Failed to add entry: ${error.message}`);
+            alert("Failed to save data.");
         } finally {
             setAddingData(false);
+        }
+    };
+
+    const handleGetReport = async () => {
+        setShowReportModal(true);
+        setReportLoading(true);
+        setReportContent('');
+
+        try {
+            // 1. Gather all data
+            const profile = await getUserProfile(currentUser.uid);
+            const dietLogs = await getDietLogs(currentUser.uid, 7);
+
+            // Get latest values for all metrics
+            const metricsSummary = dashboardData.metrics.map(m => `${m.label}: ${m.value} ${m.unit}`).join(', ');
+
+            // 2. Construct Prompt
+            const prompt = `
+                Analyze this user's health data and provide a comprehensive health report.
+                
+                User Profile:
+                - Age: ${profile?.age || 'N/A'}
+                - Weight: ${profile?.weight || 'N/A'} kg
+                - Height: ${profile?.height || 'N/A'} cm
+                - Gender: ${profile?.gender || 'N/A'}
+                - Allergies: ${profile?.allergies || 'None'}
+                - Diseases: ${profile?.diseases || 'None'}
+
+                Current Health Metrics:
+                ${metricsSummary}
+
+                Diet Summary (Last 7 Days):
+                ${dietLogs.length > 0 ? dietLogs.map(l => `- ${l.name} (${l.calories}kcal)`).join('\n') : "No diet logs found."}
+
+                Please provide:
+                1. A brief health status summary.
+                2. Potential risks based on the data.
+                3. 3 specific, actionable recommendations.
+                4. A motivational closing.
+                
+                Keep it professional, encouraging, and medically sound but easy to understand.
+            `;
+
+            // 3. Call Gemini
+            const response = await getGeminiResponse(prompt);
+            setReportContent(response);
+
+        } catch (error) {
+            console.error("Error generating report:", error);
+            setReportContent("Failed to generate report. Please try again later.");
+        } finally {
+            setReportLoading(false);
         }
     };
 
@@ -420,7 +570,7 @@ export default function Dashboard() {
                             </svg>
                             <div className="absolute inset-0 flex flex-col items-center justify-center">
                                 <span className="text-5xl font-black text-white tracking-tighter">{dashboardData.score.value}</span>
-                                <span className="text-xs text-emerald-400 uppercase tracking-widest font-bold mt-1">Excellent</span>
+
                             </div>
                         </div>
                     </div>
@@ -434,22 +584,53 @@ export default function Dashboard() {
                         <Activity className="mr-2 text-indigo-400" size={20} />
                         Live Metrics
                     </h3>
-                    <div className="flex space-x-2">
+                    <div className="flex space-x-2 relative">
                         <button
-                            onClick={handleResetData}
-                            disabled={resetting}
-                            className="flex items-center space-x-2 px-4 py-2 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors text-sm font-medium"
+                            onClick={handleGetReport}
+                            className="flex items-center space-x-2 px-4 py-2 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 hover:scale-105 transition-all text-sm font-bold"
                         >
-                            <RefreshCw size={16} className={resetting ? "animate-spin" : ""} />
-                            <span>{resetting ? "Resetting..." : "Reset Data"}</span>
+                            <Sparkles size={16} />
+                            <span>Get AI Report</span>
                         </button>
-                        <button
-                            onClick={loadRealData}
-                            disabled={loading}
-                            className="p-2 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
-                        >
-                            <MoreHorizontal size={20} className={loading ? "animate-spin" : ""} />
-                        </button>
+
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowMenu(!showMenu)}
+                                className="p-2 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+                            >
+                                <MoreHorizontal size={20} />
+                            </button>
+
+                            {showMenu && (
+                                <div className="absolute right-0 mt-2 w-48 bg-slate-900 border border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                    <button
+                                        onClick={() => {
+                                            handleResetData();
+                                            setShowMenu(false);
+                                        }}
+                                        disabled={resetting}
+                                        className="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors flex items-center"
+                                    >
+                                        <RefreshCw size={14} className={`mr-2 ${resetting ? "animate-spin" : ""}`} />
+                                        {resetting ? "Resetting..." : "Reset All Data"}
+                                    </button>
+
+                                    <div className="border-t border-slate-800 my-1"></div>
+
+                                    <button
+                                        onClick={() => {
+                                            startSimulation(currentUser.uid);
+                                            setShowMenu(false);
+                                            alert("Real-time simulation started! Data will update every 75 seconds.");
+                                        }}
+                                        className="w-full text-left px-4 py-3 text-sm text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 transition-colors flex items-center"
+                                    >
+                                        <Activity size={14} className="mr-2" />
+                                        Start Simulation
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
 
@@ -459,19 +640,19 @@ export default function Dashboard() {
                             key={metric.id}
                             onClick={() => setSelectedMetric(metric)}
                             className={`
-                group relative overflow-hidden bg-slate-900/50 border border-slate-800 
-                rounded-3xl p-6 cursor-pointer backdrop-blur-sm
-                hover:bg-slate-800/60 hover:border-${metric.color.split('-')[1]}-500/30 
-                hover:shadow-xl hover:${metric.shadowColor} hover:-translate-y-1
-                transition-all duration-300
-              `}
+                    group relative overflow-hidden bg-slate-900/50 border border-slate-800 
+                    rounded-3xl p-6 cursor-pointer backdrop-blur-sm
+                    hover:bg-slate-800/60 hover:border-${metric.color.split('-')[1]}-500/30 
+                    hover:shadow-xl hover:${metric.shadowColor} hover:-translate-y-1
+                    transition-all duration-300
+                  `}
                         >
                             <div className="flex justify-between items-start mb-6 relative z-10">
                                 <div className={`
-                    p-3 rounded-2xl bg-gradient-to-br ${metric.gradient} 
-                    text-white shadow-lg transform group-hover:scale-110 group-hover:rotate-3 transition-all duration-300
-                    ${metric.isLive ? 'animate-pulse-slow' : ''}
-                `}>
+                        p-3 rounded-2xl bg-gradient-to-br ${metric.gradient} 
+                        text-white shadow-lg transform group-hover:scale-110 group-hover:rotate-3 transition-all duration-300
+                        ${metric.isLive ? 'animate-pulse-slow' : ''}
+                    `}>
                                     <metric.icon size={20} className={metric.id === 'heart_rate' ? 'animate-beat' : ''} fill="currentColor" fillOpacity={0.2} />
                                 </div>
 
@@ -505,6 +686,59 @@ export default function Dashboard() {
     return (
         <div>
             {selectedMetric ? renderDetailView() : renderDashboard()}
+
+            {/* AI Report Modal */}
+            {showReportModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+                    <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-2xl shadow-2xl relative overflow-hidden flex flex-col max-h-[80vh]">
+                        {/* Modal Header */}
+                        <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+                            <h2 className="text-xl font-bold text-white flex items-center">
+                                <Sparkles className="mr-2 text-indigo-400" size={20} />
+                                Health Analysis
+                            </h2>
+                            <button
+                                onClick={() => setShowReportModal(false)}
+                                className="text-slate-400 hover:text-white transition-colors"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        {/* Modal Content */}
+                        <div className="p-8 overflow-y-auto custom-scrollbar">
+                            {reportLoading ? (
+                                <div className="flex flex-col items-center justify-center py-12 space-y-6">
+                                    <div className="relative w-24 h-24">
+                                        <div className="absolute inset-0 border-4 border-indigo-500/30 rounded-full"></div>
+                                        <div className="absolute inset-0 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin"></div>
+                                        <Brain className="absolute inset-0 m-auto text-indigo-400 animate-pulse" size={32} />
+                                    </div>
+                                    <div className="text-center space-y-2">
+                                        <h3 className="text-xl font-bold text-white">Analyzing your data...</h3>
+                                        <p className="text-slate-400 text-sm">Reviewing activity, diet, and profile details.</p>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="prose prose-invert max-w-none">
+                                    <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-2xl p-6 mb-6">
+                                        <h3 className="text-indigo-300 font-bold mb-2 flex items-center">
+                                            <FileText size={18} className="mr-2" />
+                                            AI Conclusion
+                                        </h3>
+                                        <div className="text-slate-200 leading-relaxed whitespace-pre-wrap">
+                                            {reportContent}
+                                        </div>
+                                    </div>
+                                    <p className="text-xs text-slate-500 text-center mt-4">
+                                        Disclaimer: This is an AI-generated analysis and not a substitute for professional medical advice.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

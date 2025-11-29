@@ -3,12 +3,12 @@ import { collection, addDoc, query, where, orderBy, limit, getDocs, Timestamp, w
 
 // --- Firestore Operations ---
 
-export const addManualEntry = async (metricType, value) => {
-    if (!auth.currentUser) throw new Error("User not authenticated");
+export const addManualEntry = async (userId, metricType, value) => {
+    if (!userId) throw new Error("User ID required");
 
     try {
         await addDoc(collection(db, "health_metrics"), {
-            userId: auth.currentUser.uid,
+            userId: userId,
             type: metricType,
             value: value,
             timestamp: Timestamp.now()
@@ -36,16 +36,15 @@ export const saveUserProfile = async (userData) => {
 };
 
 
-export const getMetricHistory = async (metricType, days = 14) => {
-    if (!auth.currentUser) return [];
+export const getMetricHistory = async (userId, metricType, days = 14) => {
+    if (!userId) return [];
 
     try {
+        // Fetch ALL history for this user/metric (without orderBy to avoid index issues)
         const q = query(
             collection(db, "health_metrics"),
-            where("userId", "==", auth.currentUser.uid),
-            where("type", "==", metricType),
-            orderBy("timestamp", "desc"),
-            limit(days)
+            where("userId", "==", userId),
+            where("type", "==", metricType)
         );
 
         const querySnapshot = await getDocs(q);
@@ -57,100 +56,63 @@ export const getMetricHistory = async (metricType, days = 14) => {
             history.push({
                 date: date.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' }),
                 value: data.value,
-                timestamp: date.toISOString()
+                timestamp: date.toISOString(),
+                rawTimestamp: date.getTime() // For sorting
             });
         });
 
-        // Return history reversed (oldest to newest) for the chart
-        return history.reverse();
+        // Sort by timestamp descending
+        history.sort((a, b) => b.rawTimestamp - a.rawTimestamp);
+
+        // Slice to limit days (or entries) and reverse for chart (oldest to newest)
+        return history.slice(0, days).reverse();
     } catch (error) {
         console.error(`Error fetching history for ${metricType}:`, error);
         return [];
     }
 };
 
-export const seedDatabase = async () => {
-    if (!auth.currentUser) return;
-    const userId = auth.currentUser.uid;
+export const clearDatabase = async (userId) => {
+    if (!userId) return;
 
-    // Check if data exists for this user
-    // We check if there are at least 10 entries. If less, we assume it needs seeding.
-    const q = query(
-        collection(db, "health_metrics"),
-        where("userId", "==", userId),
-        limit(10)
-    );
-    const snapshot = await getDocs(q);
+    try {
+        // Clear Health Metrics
+        const qMetrics = query(
+            collection(db, "health_metrics"),
+            where("userId", "==", userId)
+        );
+        const snapshotMetrics = await getDocs(qMetrics);
+        const batch = writeBatch(db);
+        snapshotMetrics.docs.forEach((doc) => {
+            batch.delete(doc.ref);
+        });
 
-    // If we have a decent amount of data, skip seeding to avoid duplicates.
-    if (snapshot.size >= 10) {
-        console.log("Database already has data, skipping seed.");
-        return;
+        // Clear Diet Logs
+        const qDiet = query(
+            collection(db, "diet_logs"),
+            where("userId", "==", userId)
+        );
+        const snapshotDiet = await getDocs(qDiet);
+        snapshotDiet.docs.forEach((doc) => {
+            batch.delete(doc.ref);
+        });
+
+        await batch.commit();
+        console.log("User data cleared.");
+    } catch (error) {
+        console.error("Error clearing data:", error);
+        throw error;
     }
-
-    console.log("Seeding database with 14 days of data...");
-    const batch = writeBatch(db);
-    const metrics = ['steps', 'calories', 'bp', 'spo2', 'sleep', 'sugar', 'stress', 'heart_rate'];
-    const today = new Date();
-
-    metrics.forEach(metric => {
-        for (let i = 0; i < 14; i++) {
-            const date = new Date(today);
-            date.setDate(date.getDate() - i);
-
-            let val = 0;
-            switch (metric) {
-                case 'steps': val = Math.floor(Math.random() * 5000) + 5000; break;
-                case 'calories': val = Math.floor(Math.random() * 500) + 1500; break;
-                case 'spo2': val = Math.floor(Math.random() * 3) + 96; break;
-                case 'sleep': val = Math.floor(Math.random() * 3) + 6; break;
-                case 'stress': val = Math.floor(Math.random() * 40) + 20; break;
-                case 'sugar': val = Math.floor(Math.random() * 20) + 80; break;
-                case 'heart_rate': val = Math.floor(Math.random() * 20) + 60; break;
-                case 'bp': val = Math.floor(Math.random() * 20) + 110; break; // Systolic
-            }
-
-            const docRef = doc(collection(db, "health_metrics"));
-            batch.set(docRef, {
-                userId,
-                type: metric,
-                value: val,
-                timestamp: Timestamp.fromDate(date)
-            });
-        }
-    });
-
-    await batch.commit();
-    console.log("Database seeded successfully.");
-};
-
-export const clearDatabase = async () => {
-    if (!auth.currentUser) return;
-    const userId = auth.currentUser.uid;
-
-    const q = query(
-        collection(db, "health_metrics"),
-        where("userId", "==", userId)
-    );
-    const snapshot = await getDocs(q);
-
-    const batch = writeBatch(db);
-    snapshot.docs.forEach((doc) => {
-        batch.delete(doc.ref);
-    });
-
-    await batch.commit();
-    console.log("Database cleared.");
 };
 
 // --- Diet Logging Operations ---
 
-export const saveDietLog = async (logData) => {
-    if (!auth.currentUser) throw new Error("User not authenticated");
+export const saveDietLog = async (userId, logData) => {
+    if (!userId) throw new Error("User ID required");
 
     try {
         await addDoc(collection(db, "diet_logs"), {
-            userId: auth.currentUser.uid,
+            userId: userId,
             ...logData,
             timestamp: Timestamp.now()
         });
@@ -161,15 +123,14 @@ export const saveDietLog = async (logData) => {
     }
 };
 
-export const getDietLogs = async (days = 7) => {
-    if (!auth.currentUser) return [];
+export const getDietLogs = async (userId, days = 7) => {
+    if (!userId) return [];
 
     try {
+        // Fetch ALL logs for this user (without orderBy to avoid index issues)
         const q = query(
             collection(db, "diet_logs"),
-            where("userId", "==", auth.currentUser.uid),
-            orderBy("timestamp", "desc"),
-            limit(50) // Limit to recent 50 logs for now
+            where("userId", "==", userId)
         );
 
         const querySnapshot = await getDocs(q);
@@ -177,37 +138,44 @@ export const getDietLogs = async (days = 7) => {
 
         querySnapshot.forEach((doc) => {
             const data = doc.data();
+            const date = data.timestamp.toDate();
             logs.push({
                 id: doc.id,
                 ...data,
-                date: data.timestamp.toDate().toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' }),
-                timestamp: data.timestamp.toDate().toISOString()
+                date: date.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' }),
+                timestamp: date.toISOString(),
+                rawTimestamp: date.getTime() // For sorting
             });
         });
 
-        return logs;
+        // Sort by timestamp descending
+        logs.sort((a, b) => b.rawTimestamp - a.rawTimestamp);
+
+        // Limit to recent 50
+        return logs.slice(0, 50);
     } catch (error) {
         console.error("Error fetching diet logs:", error);
         return [];
     }
 };
 
-
-
-export const subscribeToDietLogs = (callback) => {
-    if (!auth.currentUser) return () => { };
+export const subscribeToDietLogs = (userId, callback) => {
+    if (!userId) return () => { };
 
     // Get logs from the last 24 hours to ensure we see recent entries
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
+    // Note: This subscription MIGHT fail if index is missing for orderBy.
+    // If it fails, we should probably fallback to just fetching once or warn user.
+    // For now, we'll keep it but if it fails, the user won't see real-time updates.
+    // To be safe, let's remove orderBy here too if possible, but onSnapshot needs a query.
+    // Without orderBy, we get random order. But we can sort on client.
 
     const q = query(
         collection(db, "diet_logs"),
-        where("userId", "==", auth.currentUser.uid),
-        orderBy("timestamp", "desc")
+        where("userId", "==", userId)
+        // orderBy("timestamp", "desc") // Removed to avoid index requirement for now
     );
 
-    console.log("Subscribing to diet logs for user:", auth.currentUser.uid);
+    console.log("Subscribing to diet logs for user:", userId);
 
     return onSnapshot(q, (snapshot) => {
         const logs = [];
@@ -217,9 +185,14 @@ export const subscribeToDietLogs = (callback) => {
                 id: doc.id,
                 ...data,
                 time: data.timestamp ? data.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A',
-                timestamp: data.timestamp ? data.timestamp.toDate() : new Date()
+                timestamp: data.timestamp ? data.timestamp.toDate() : new Date(),
+                rawTimestamp: data.timestamp ? data.timestamp.toDate().getTime() : 0
             });
         });
+
+        // Sort in memory
+        logs.sort((a, b) => b.rawTimestamp - a.rawTimestamp);
+
         console.log("Fetched logs:", logs);
         callback(logs);
     }, (error) => {
@@ -319,30 +292,66 @@ export const getStudentsByCollege = async (collegeName) => {
 export const getStudentMetrics = async (userId) => {
     try {
         // Get latest steps
+        // Removing orderBy here too to be safe, though limit(1) without orderBy is arbitrary.
+        // But if index is missing, it crashes. Better to fetch all and sort in JS.
         const stepsQuery = query(
             collection(db, "health_metrics"),
             where("userId", "==", userId),
-            where("type", "==", "steps"),
-            orderBy("timestamp", "desc"),
-            limit(1)
+            where("type", "==", "steps")
         );
         const stepsSnapshot = await getDocs(stepsQuery);
-        const steps = stepsSnapshot.empty ? 0 : stepsSnapshot.docs[0].data().value;
+        let steps = 0;
+        if (!stepsSnapshot.empty) {
+            const allSteps = stepsSnapshot.docs.map(d => d.data());
+            allSteps.sort((a, b) => b.timestamp - a.timestamp);
+            steps = allSteps[0].value;
+        }
 
         // Get latest stress
         const stressQuery = query(
             collection(db, "health_metrics"),
             where("userId", "==", userId),
-            where("type", "==", "stress"),
-            orderBy("timestamp", "desc"),
-            limit(1)
+            where("type", "==", "stress")
         );
         const stressSnapshot = await getDocs(stressQuery);
-        const stress = stressSnapshot.empty ? 0 : stressSnapshot.docs[0].data().value;
+        let stress = 0;
+        if (!stressSnapshot.empty) {
+            const allStress = stressSnapshot.docs.map(d => d.data());
+            allStress.sort((a, b) => b.timestamp - a.timestamp);
+            stress = allStress[0].value;
+        }
 
         return { steps, stress };
     } catch (error) {
         console.error("Error fetching student metrics:", error);
         return { steps: 0, stress: 0 };
     }
+};
+
+export const subscribeToRecentMetrics = (userId, callback) => {
+    // Listen for metrics added from now onwards (or slightly in the past to be safe)
+    const startTime = new Date().toISOString();
+
+    const q = query(
+        collection(db, "health_metrics"),
+        where("userId", "==", userId),
+        where("timestamp", ">=", startTime)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        const changes = [];
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === "added") {
+                changes.push({ id: change.doc.id, ...change.doc.data() });
+            }
+        });
+
+        if (changes.length > 0) {
+            callback(changes);
+        }
+    }, (error) => {
+        console.error("Error subscribing to metrics:", error);
+    });
+
+    return unsubscribe;
 };
